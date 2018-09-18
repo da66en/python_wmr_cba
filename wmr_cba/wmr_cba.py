@@ -13,6 +13,12 @@
     SDK (http://www.westmountainradio.com/zip/cba4_api_sdk.zip)
 """
 """
+    SOURCE CONTROL
+
+    The latest source can be found here:
+    https://github.com/da66en/python_wmr_cba
+"""
+"""
     HISTORY
 
     2018-Sep-09
@@ -25,49 +31,52 @@ import threading
 import time
 import ctypes
 import sys
+import usb.core
 from sys import exit
 
 class cba4:
     """
     Class for talking to CBA IV
     """
-    def __init__(self, serial_number=None, interface_number=0):
+    def __init__(self, serial_number=None, interface=None):
+        self.__config_bytes = None
+        self.__thread = None
+
         if serial_number:
-            devices = self.scan()
-            for device in devices:
-                if device == serial_number:
-                    break
-                interface_number += 1
-                #end -for device in devices-
-            #end -if serial_number-
-
-        self.__handle_read = -1
-        self.__handle_write = -1
-
-        self.__usb = mpusbapi()
-        self.__handle_read = self.__usb.MPUSBOpen(interface_number, "vid_2405&pid_0005", "\\MCHP_EP1", 1)
-        self.__handle_write = self.__usb.MPUSBOpen(interface_number, "vid_2405&pid_0005", "\\MCHP_EP1", 0)
+            interface_number = 0
+            if serial_number:
+                devices = self.scan()
+                for device in devices:
+                    if device == serial_number:
+                        break
+                    interface_number += 1
+                    #end -for device in devices-
+                #end -if serial_number-
+            self.__usb_if = MpOrLibUsb(interface_number)
+            #end -if not interface-
+        elif interface:
+           self.__usb_if = interface
+        else:
+            self.__usb_if = MpOrLibUsb()
         
         if self.is_valid():
             rx = bytearray(65)
             bw = bytearray(1)
             bw[0] = 0x43
-            self.__usb.MPUSBWrite(self.__handle_write, bw, 1000)
+            self.__usb_if.write(bw, 1000)
             ok = self.__wait_for(0x63, rx)
             if ok:
                 self.__config_bytes = list(rx)
-
-        self.__thread = None
         #end __init__
 
     def close(self):
+        """
+        Gracefully close connection to CBA4.
+        """
         self.do_stop()
-        if (self.__handle_read != -1):
-            ret = self.__usb.MPUSBClose(self.__handle_read)
-            self.__handle_read = -1
-        if (self.__handle_write != -1):
-            ret = self.__usb.MPUSBClose(self.__handle_write)
-            self.__handle_write = -1
+        if self.__usb_if:
+            self.__usb_if.close()
+        self.__usb_if = None
         #end close()
 
     def __del__(self):
@@ -140,32 +149,40 @@ class cba4:
         Returns:    \n
         true if connected OK, false if error.
         """
-        return self.__usb and (self.__handle_write != -1) and (self.__handle_read != -1)
-        #end valid()
+        if not self.__usb_if:
+            return False
+        return self.__usb_if.is_valid()
+        #end is_valid()
 
     @staticmethod
     def scan():
         """
-        Returns an array of found devices, as their serial number (integer) -
-        or None if there are no devices connected.
+        Returns an array of found devices, as their serial number (integer).
         """
-        num = mpusbapi().MPUSBGetDeviceCount("vid_2405&pid_0005")
-        if not num:
-            return None
+        num = MpOrLibUsb.getDeviceCount()
         devices = []
         i = 0
         while i < num:
-            cba = cba4(interface_number=i)
+            cba = cba4(interface=MpOrLibUsb(i))
             i += 1
             sn = cba.get_serial_number()
             if sn:
                 devices.append(sn)
             cba.close()
             #end loop
-        if len(devices) == 0:
-            return None
         return devices
         #end scan()
+
+    @staticmethod
+    def test():
+        ret = MpOrLibUsb.test()
+        if ret:
+            return ret
+        devices = cba4.scan()
+        if len(devices) == 0:
+            return "No CBAs found"
+        return None
+        #end test()
 
     def __wait_for(self, cmd_byte, rx_bytes, timeout_seconds=1.0):
         """
@@ -183,7 +200,13 @@ class cba4:
         t = time.time()
         remain = timeout_seconds
         while 1:
-            num_read = self.__usb.MPUSBRead(self.__handle_read, rx_bytes, int(remain*1000))
+            #num_read = self.__usb_if.MPUSBRead(self.__handle_read, rx_bytes, int(remain*1000))
+            #if (num_read > 0) and (rx_bytes[0]==cmd_byte):
+            #    return True
+            rx = self.__usb_if.read(int(remain*1000))
+            num_read = len(rx)
+            if rx:
+                rx_bytes[:] = rx
             if (num_read > 0) and (rx_bytes[0]==cmd_byte):
                 return True
             remain = timeout_seconds - (time.time()-t)
@@ -207,7 +230,7 @@ class cba4:
         return self.__config_bytes[4] + (self.__config_bytes[5] * 0x100) + (self.__config_bytes[6] * 0x10000) + (self.__config_bytes[7] * 0x1000000)
         #end get_serial_number
 
-    def do_start_current(self, amps, vstop=0):
+    def do_start(self, amps, vstop=0):
         """
         Tells the CBA to start drawing 'amps' load, in float, from it's source.  
         If voltage of supply goes below 'vstop', then the unit will stop drawing
@@ -288,14 +311,13 @@ class cba4:
             force_xmit = bytearray(16)
             force_xmit[0] = 0x53
 
-        self.__usb.MPUSBWrite(self.__handle_write, force_xmit, 1000)
+        self.__usb_if.write(force_xmit, 1000)
 
         ok = self.__wait_for(0x73, force_rcv)
 
         if ok:
             return force_rcv
 
-        print("NO RESPONSE")
         return None
         #end get_status_response()
 
@@ -366,7 +388,161 @@ class cba4:
         return ((status[1] & 0x20) == 0x20)
         #end is_power_limited()
     #end class cba4
-    
+
+class MpOrLibUsb:
+    """
+    A wrapper that either goes to mpusbapi (mpusbapi.dll) or usb.core (pyusb),
+    depending on what the operating system is and what's installed.
+
+    __init__(ifnumber=0) - connect to specified device, based on order it's detected.
+    @staticmethod test() - if an error loading libraries, show error message.
+    @staticmethod getDeviceCount() - return number of CBA4s connceted.
+    isValid() - returns True if we are connected to a CBA4 device.
+    close() - gracefully close connection
+    num = write(bytearray) - write bytes to CBA, returns number of bytes written
+    bytearray = read(timeout_ms) - read bytes from CBA, waits 'timeout_ms' duration.
+    """
+    def __init__(self, interface_number=0):
+        self.__handle_read = -1
+        self.__handle_write = -1
+        self.__usb_dev = None
+        numMpusb = MpOrLibUsb.__getDeviceCountMpusb()
+        if (interface_number < numMpusb):
+            # grab from mpusbapi
+            self.__usb_dev = mpusbapi()
+            self.__handle_read = self.__usb_dev.MPUSBOpen(interface_number, "vid_2405&pid_0005", "\\MCHP_EP1", 1)
+            self.__handle_write = self.__usb_dev.MPUSBOpen(interface_number, "vid_2405&pid_0005", "\\MCHP_EP1", 0)
+            #end (inteface_number < numMpusb)
+        else:
+            # grab from pyusb/libusb
+            interface_number = interface_number - numMpusb
+            try:
+                devs = usb.core.find(find_all=True, idVendor=0x2405, idProduct=0x0005)
+                i = 0
+                while i < interface_number:
+                    i += 1
+                    next(devs)
+                self.__usb_dev = next(devs)
+            except:
+                pass
+        #end __init__
+
+    @staticmethod
+    def test():
+        """
+        Returns a string if there is an error, else None if everything is OK.
+
+        The best use for this is to show a user error if the USB libraries could not be found.
+        """
+        mpusbapi_ret = mpusbapi.test()
+        pyusb_ret = None
+        ret = None
+        try:
+            usb.core.find(idVendor=0x2405, idProduct=0x0005)
+        except:
+            pyusb_ret = "1"
+        if pyusb_ret and mpusbapi_ret:
+            ret = "USB libraries not found or not installed!"
+        return ret
+        #end test()
+
+    @staticmethod
+    def __getDeviceCountMpusb():
+        num = mpusbapi().MPUSBGetDeviceCount("vid_2405&pid_0005")
+        return num
+        #end getDeviceCountMpusb
+
+    @staticmethod
+    def __getDeviceCountLibusb():
+        num = 0
+        try:
+            devs = usb.core.find(find_all=True, idVendor=0x2405, idProduct=0x0005)
+        except:
+            devs = None
+        if devs:
+            num = sum(1 for _ in devs)
+        return num
+        #end __getDeviceCountLibusb()    
+
+    @staticmethod
+    def getDeviceCount():
+        """
+        Returns how many matching devices are connected to the host, or None if error.
+        """
+        num = MpOrLibUsb.__getDeviceCountMpusb()
+        num = num + MpOrLibUsb.__getDeviceCountLibusb()
+        return num
+        #end GetDeviceCount()
+
+    def is_valid(self):
+        """
+        Checks to see if connection is valid.
+
+        Returns:    \n
+        true if connected OK, false if error.
+        """
+        if not self.__usb_dev:
+            return False
+        if isinstance(self.__usb_dev, mpusbapi) and (self.__handle_write != -1) and (self.__handle_read != -1):
+            return True
+        if isinstance(self.__usb_dev, usb.core.Device):
+            return True
+        return False
+        #end valid()
+
+    def close(self):
+        """
+        Gracefully close USB connection to CBA.
+        """
+        if self.__usb_dev and isinstance(self.__usb_dev, mpusbapi):
+            if (self.__handle_read != -1):
+                self.__usb_dev.MPUSBClose(self.__handle_read)
+                self.__handle_read = -1
+            if (self.__handle_write != -1):
+                self.__usb_dev.MPUSBClose(self.__handle_write)
+                self.__handle_write = -1
+        elif self.__usb_dev and isinstance(self.__usb_dev, usb.core.Device):
+            self.__usb_dev.reset()
+        self.__usb_dev = None
+        #end close()
+
+    def __del__(self):
+        self.close()
+        #end __del__
+
+    def write(self, data, timeout_ms=0):
+        """
+        Write 'data' (bytearray) to CBA4, waits 'timeout_ms' for endpoint to be available for writing (0 is wait forever).
+        Returns number of bytes actually written.
+        """
+        if not self.is_valid():
+            return 0
+        if isinstance(self.__usb_dev, mpusbapi):
+            num = self.__usb_dev.MPUSBWrite(self.__handle_write, data, timeout_ms)
+        else:
+            num = self.__usb_dev.write(1, data, timeout_ms)
+        return num
+        #end write()
+
+    def read(self, timeout_ms=0):
+        """
+        Read from CBA4, returns bytearray if success or None if nothing available.  Will wait 'timeout_ms', forever if set to 0.
+        """
+        if not self.is_valid():
+            return None
+        buf = None
+        if isinstance(self.__usb_dev, mpusbapi):
+            rx = bytearray(65)
+            num_read = self.__usb_dev.MPUSBRead(self.__handle_read, rx, timeout_ms)
+            if num_read:
+                buf = bytearray(num_read)
+                buf[:] = rx[:num_read]
+        else:
+            buf = self.__usb_dev.read(0x81, 64, 0)
+        return buf
+        #end read()
+    #end class MpOrLibUsb
+
 class mpusbapi:
     """
     ctypes wrapper to mpusbapi.dll
@@ -377,15 +553,10 @@ class mpusbapi:
     https://stackoverflow.com/questions/252417/how-can-i-use-a-dll-file-from-python
     """
     def __init__(self):
-        dll = None
-        self.__dll = None
-        if sys.platform == "win32":
-            #dll = ctypes.CDLL("mpusbapi.dll")
-            dll = ctypes.cdll.LoadLibrary("mpusbapi.dll")
-        else:
-            return
+        self.__dll = self.__get_dll()
 
-        self.__dll = dll
+        if not self.__dll:
+            return
 
         #DWORD (*MPUSBGetDLLVersion)(void);
         self.__dll._MPUSBGetDLLVersion.restype = ctypes.c_long
@@ -412,7 +583,30 @@ class mpusbapi:
         self.__dll._MPUSBClose.argtypes = [ctypes.c_int]
         self.__dll._MPUSBRead.restype = ctypes.c_bool
         # end __init__()
-        
+    
+    @staticmethod
+    def __get_dll():
+        dll = None
+        if sys.platform == "win32":
+            try:
+                #dll = ctypes.CDLL("mpusbapi.dll")
+                #dll = ctypes.cdll.LoadLibrary("mpusbapi.dll")
+                dll = ctypes.cdll.LoadLibrary("mpusbapi.dll")
+            except:
+                dll = None
+        return dll
+        #end __get_dll
+
+    @staticmethod
+    def test():
+        """
+        Performs a simple test.  Returns an error string if an error, None if everything is OK.
+        """
+        if not mpusbapi.__get_dll():
+            return "Error loading library mpusbapi.dll, it is missing or not installed!"
+        return None
+        #end test()
+
     def MPUSBGetDLLVersion(self):
         """
         Get the version number of the DLL.
@@ -448,7 +642,7 @@ class mpusbapi:
         of the driver.
         """
         if not self.__dll:
-            return None
+            return 0
         return self.__dll._MPUSBGetDeviceCount(vid_pid_string.encode('utf-8'))
         #end MPUSBGetDeviceCount
 
@@ -661,6 +855,12 @@ def __test_cba4():
         print(disp)
         #end show_status()
 
+    test = cba4.test()
+    if test:
+        print("Test ERROR: " + test)
+    else:
+        print("Test OK")
+
     devices = cba4.scan()
     print("Found "+str(len(devices))+" devices.")
 
@@ -668,7 +868,7 @@ def __test_cba4():
 
     if not cba.is_valid():
         print("ERROR!  Couldn't open a device!")
-        exit()
+        exit(-1)
     
     print("Opened CBA4, serial #" + str(cba.get_serial_number()))
 
@@ -676,7 +876,7 @@ def __test_cba4():
 
     load = 0.2
     print("Starting load = " + str(load))
-    cba.do_start_current(load)
+    cba.do_start(load)
 
     reads = 10
     while reads:
