@@ -1,0 +1,1 @@
+ACTION=="add", SUBSYSTEMS=="usb", ATTRS{idVendor}=="2405", ATTRS{idProduct}=="0005", MODE="666", GROUP="users"
