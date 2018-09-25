@@ -1,2 +1,7 @@
 .*
 !/.gitignore
+*.cat
+*libusb-1.0.dll
+*mpusbapi.dll
+_test*
+*.pyc
