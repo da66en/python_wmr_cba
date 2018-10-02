@@ -1,22 +1,35 @@
 """
-    wmr_cba.py
+    SUMMARY:
 
     Python library for talking to West Mountain Radio battery analyzer tools,
     such as the CBA IV.
-    
-    As of right now this code only supports Windows systems using the official
-    WMR provided drivers (http://www.westmountainradio.com/kb_view_topic.php?id=OT41).
-    In the future I would also like to add Linux support using libusb, but I have no ETA.
-    
-    Using this library with the official WMR drivers requires having the mpusbapi.dll
-    file in the same directory as this script.  This file can be found in the CBA4 
-    SDK (http://www.westmountainradio.com/zip/cba4_api_sdk.zip)
-"""
-"""
+
+    This code has been tested on Windows and Linux using libusb and the PyUsb
+    python module.  Windows users can also use the official drivers provided
+    by West Mountain Radio (WMR) (at http://www.westmountainradio.com/kb_view_topic.php?id=OT41).
+    Be sure either libusb is installed and available in the operating system's
+    library path or the same directory as the python script, or the WMR 
+    official driver (mpusbapi.dll) is available in the operating system's
+    library path or the same directory as the python script.
+
+    AVAILABLE CLASSES:
+
+    CBA4 - Class for talking to a WMR CBA4
+
+    MpUsbApi - Class for talking to a USB device using Microchip's MPUSBAPI 
+    driver.  This may not be useful to many people, but provided for any
+    legacy users of this driver.
+
+    MpOrLibUsb - Class for creating an abstracted interface for talking to
+    devices that may be using either libusb/WinUSB or MPUSBAPI drivers.
+
     SOURCE CONTROL
 
-    The latest source can be found here:
+    The latest source, examples and drivers can be found here:
     https://github.com/da66en/python_wmr_cba
+
+    Python package index can be found here:
+    https://pypi.org/project/wmr-cba/
 """
 """
     HISTORY
@@ -35,13 +48,52 @@ import usb.core
 from sys import exit
 
 def debug(msg):
+    """
+    Send a debug message to the console.
+    """
     #print(msg)
     pass
     #end debug
 
 class CBA4:
     """
-    Class for talking to CBA IV
+    Class for talking to CBA IV.
+
+    __init__(serial_number) (Constructor) - Open a CBAIV.  If serial_number is
+    provided, will attempt to open that specific CBAIV.  If serial_number isn't
+    provided, will attempt to open the first CBAIV found.
+
+    is_valid() - returns True if we are connected to a CBAIV.
+
+    close() - gracefully close the connection to the CBAIV.
+
+    @staticmethod scan() - Returns an array of found CBAIV's serial numbers.
+
+    @staticmethod test() - Perform a simple test of the USB framework.
+
+    get_serial_number() - Returns the serial number of the connected CBAIV.
+
+    do_start(amps, vstop) - Starts performing a test by drawing 'amps' current
+    through the CBAIV.  If 'vstop' is provided, will automatically stop drawing
+    current if the voltage of the battery goes below specified value.
+
+    do_stop() - Stops performing a test, stops all current being drawn.
+
+    get_voltage() - Gets the voltage being read by the CBAIV.
+
+    get_set_current() - Gets the current that was set by the do_start().
+
+    get_measured_current() - Gets the actual current that is being drawn by the
+    CBAIV.
+
+    is_running() - Returns True if the CBAIV is performing a test and drawing
+    current.
+
+    is_power_limited() - Returns True if the CBAIV is limiting current draw
+    to prevent exceeding the max power limits of the unit.
+
+    is_high_temp() - Returns True if the test was aborted because the CBAIV 
+    temperature was too high.
     """
     def __init__(self, serial_number=None, interface=None):
         debug("CBA4.__init__()")
@@ -249,7 +301,12 @@ class CBA4:
         If voltage of supply goes below 'vstop', then the unit will stop drawing
         current (to prevent over discharing a battery).  'vstop' is a float,
         or send 0 to not use vstop.
+
         Use do_stop() to stop drawing current.
+
+        The CBAIV has a watchdog timer (WDT) that stops drawing current if
+        the USB connection goes inactive.  To prevent this from happening,
+        this function starts a thread that keeps the CBAIV alive.
         """
         debug("CBA4.do_start()")
         self.do_stop()
@@ -286,7 +343,9 @@ class CBA4:
 
     def do_stop(self):
         """
-        End a running test / current draw
+        End a running test / current draw.
+
+        Stops the tread started by do_start().
         """
         debug("CBA4.do_stop()")
         if (self.__thread and self.__thread.isAlive()):

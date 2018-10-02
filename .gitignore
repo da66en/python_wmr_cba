@@ -4,4 +4,7 @@
 *libusb-1.0.dll
 *mpusbapi.dll
 _test*
+_make*
 *.pyc
+build/*
+*egg-info*
