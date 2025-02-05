@@ -348,7 +348,7 @@ class CBA4:
         Stops the tread started by do_start().
         """
         debug("CBA4.do_stop()")
-        if (self.__thread and self.__thread.isAlive()):
+        if (self.__thread and self.__thread.is_alive()):
             self.__thread.stop()
             self.__thread.join(None)
             self.__thread = None
@@ -378,7 +378,7 @@ class CBA4:
         if not force_rcv:
             force_rcv = bytearray(65)
 
-        if not force_xmit and self.__thread and self.__thread.isAlive():
+        if not force_xmit and self.__thread and self.__thread.is_alive():
             self.__thread.get_status_response(force_rcv)
             return force_rcv
 
