@@ -36,8 +36,11 @@
 
     2018-Sep-09
       - Initial release (Windows MCHPUSB only)
+
+    2025-Feb-10
+      - Replaced 'isAlive()' with 'is_alive()' (thanks @Cybertaco360)
 """
-# Copyright (c) 2018 - Darren Rook (da66en) (route66@gmail.com)
+# Copyright (c) 2025 - Darren Rook (da66en) (route66@gmail.com)
 # Rights to use this code is made available using the MIT license.
 
 import threading
@@ -683,12 +686,16 @@ class MpUsbApi:
     def __get_dll():
         dll = None
         if sys.platform == "win32":
-            try:
-                #dll = ctypes.CDLL("mpusbapi.dll")
-                #dll = ctypes.cdll.LoadLibrary("mpusbapi.dll")
-                dll = ctypes.cdll.LoadLibrary("mpusbapi.dll")
-            except:
-                dll = None
+            if dll == None:
+                try:
+                    dll = ctypes.cdll.LoadLibrary("mpusbapi.dll")
+                except:
+                    dll = None
+            if dll == None:
+                try:
+                    dll = ctypes.cdll.LoadLibrary("./mpusbapi.dll")
+                except:
+                    dll = None
         return dll
         #end __get_dll
 

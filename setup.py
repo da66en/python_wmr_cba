@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="wmr_cba",
-    version="1.1.0",
+    version="1.2.0",
     author="Darren Rook (da66en)",
     author_email="route66@gmail.com",
     description="Python module for controlling West Mountain Radio CBA devices.",
